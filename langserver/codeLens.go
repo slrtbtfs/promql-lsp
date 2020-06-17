@@ -24,7 +24,6 @@ import (
 
 // CodeLens is required by the protocol.Server interface.
 func (s *server) CodeLens(_ context.Context, params *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
-
 	// Currently Code Lenses are only supported for VS Code
 	if s.initializeParams.ClientInfo.Name != "vscode" {
 		return nil, nil
@@ -49,7 +48,6 @@ func (s *server) CodeLens(_ context.Context, params *protocol.CodeLensParams) ([
 	codeLenses := make([]protocol.CodeLens, 0, len(queries))
 
 	for _, query := range queries {
-
 		pos, err := doc.PosToProtocolPosition(query.Pos)
 		if err != nil {
 			return nil, nil
