@@ -20,9 +20,6 @@ import (
 
 // CodeLens is required by the protocol.Server interface.
 func (s *server) CodeLens(_ context.Context, _ *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
-	// As of version 0.4.0 of gopls it is not possible to instruct the language
-	// client to stop asking for Code Lenses and Document Links. To prevent
-	// VS Code from showing error messages, this feature is implemented by
-	// returning empty values.
+
 	return nil, nil
 }
