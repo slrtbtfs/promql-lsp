@@ -14,12 +14,63 @@ package langserver
 
 import (
 	"context"
+	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/prometheus-community/promql-langserver/internal/vendored/go-tools/lsp/protocol"
+	"github.com/prometheus-community/promql-langserver/langserver/cache"
 )
 
 // CodeLens is required by the protocol.Server interface.
-func (s *server) CodeLens(_ context.Context, _ *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
+func (s *server) CodeLens(_ context.Context, params *protocol.CodeLensParams) ([]protocol.CodeLens, error) {
 
-	return nil, nil
+	// Currently Code Lenses are only supported for VS Code
+	if s.initializeParams.ClientInfo.Name != "vscode" {
+		return nil, nil
+	}
+
+	promURL := s.metadataService.GetURL()
+
+	if promURL == "" {
+		return nil, nil
+	}
+
+	doc, err := s.cache.GetDocument(params.TextDocument.URI)
+	if err != nil {
+		return nil, nil
+	}
+
+	queries, err := doc.GetQueries()
+	if err != nil {
+		return nil, nil
+	}
+
+	codeLenses := make([]protocol.CodeLens, 0, len(queries))
+
+	for _, query := range queries {
+
+		pos, err := doc.PosToProtocolPosition(query.Pos)
+		if err != nil {
+			return nil, nil
+		}
+
+		qText := query.Content
+		qTextEncoded := url.QueryEscape(strings.TrimSpace(qText))
+		target := fmt.Sprint(promURL, "/graph?g0.expr=", qTextEncoded)
+
+		codeLenses = append(codeLenses, protocol.CodeLens{
+			Range: protocol.Range{
+				Start: pos,
+				End:   cache.EndOfLine(pos),
+			},
+			Command: protocol.Command{
+				Title:     "▶ PromQL Query: View in expression Browser",
+				Command:   "vscode-promql.openURL",
+				Arguments: []interface{}{target},
+			},
+		})
+	}
+
+	return codeLenses, nil
 }

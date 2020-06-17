@@ -234,7 +234,7 @@ groups:
 					Line:      9.0,
 					Character: 0.0,
 				},
-				End: endOfLine(protocol.Position{
+				End: EndOfLine(protocol.Position{
 					Line:      10.0,
 					Character: 0.1,
 				}),
