@@ -23,7 +23,7 @@ import (
 
 // Initialize handles a call from the client to initialize the server.
 // Required by the protocol.Server interface.
-func (s *server) Initialize(_ context.Context, _ *protocol.ParamInitialize) (*protocol.InitializeResult, error) {
+func (s *server) Initialize(_ context.Context, paramInitialize *protocol.ParamInitialize) (*protocol.InitializeResult, error) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 
@@ -34,6 +34,8 @@ func (s *server) Initialize(_ context.Context, _ *protocol.ParamInitialize) (*pr
 	s.state = serverInitializing
 
 	s.cache.Init()
+
+	s.initializeParams = paramInitialize.InitializeParams
 
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{

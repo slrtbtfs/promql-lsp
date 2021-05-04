@@ -126,8 +126,8 @@ func (d *DocumentHandle) yamlPositionToTokenPos(line int, column int, lineOffset
 	}
 }
 
-// endOfLine returns the end of the Line of the given protocol.Position.
-func endOfLine(p protocol.Position) protocol.Position {
+// EndOfLine returns the end of the Line of the given protocol.Position.
+func EndOfLine(p protocol.Position) protocol.Position {
 	return protocol.Position{
 		Line:      p.Line + 1,
 		Character: 0,

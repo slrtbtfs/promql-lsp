@@ -54,8 +54,9 @@ type server struct {
 	Conn   *jsonrpc2.Conn
 	client protocol.Client
 
-	state   serverState
-	stateMu sync.Mutex
+	state            serverState
+	stateMu          sync.Mutex
+	initializeParams protocol.InitializeParams
 
 	cache cache.DocumentCache
 
