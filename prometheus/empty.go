@@ -19,6 +19,7 @@ import (
 
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/pkg/labels"
 )
 
 // emptyHTTPClient must be used when no prometheus URL has been defined.
@@ -34,11 +35,11 @@ func (c *emptyHTTPClient) AllMetricMetadata(_ context.Context) (map[string][]v1.
 	return make(map[string][]v1.Metadata), nil
 }
 
-func (c *emptyHTTPClient) LabelNames(_ context.Context, _ string) ([]string, error) {
+func (c *emptyHTTPClient) LabelNames(_ context.Context, _ []*labels.Matcher) ([]string, error) {
 	return []string{}, nil
 }
 
-func (c *emptyHTTPClient) LabelValues(_ context.Context, _ string) ([]model.LabelValue, error) {
+func (c *emptyHTTPClient) LabelValues(_ context.Context, _ string, _ []*labels.Matcher) ([]model.LabelValue, error) {
 	return []model.LabelValue{}, nil
 }
 

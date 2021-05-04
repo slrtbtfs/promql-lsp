@@ -22,9 +22,10 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-
 	"github.com/prometheus-community/promql-langserver/internal/vendored/go-tools/lsp/protocol"
 	"github.com/prometheus-community/promql-langserver/langserver/cache"
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/pkg/labels"
 	promql "github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/util/strutil"
 	"github.com/sahilm/fuzzy"
@@ -273,10 +274,7 @@ func (s *server) completeLabels(ctx context.Context, completions *[]protocol.Com
 		}
 	}
 
-	vs, ok := location.Node.(*promql.VectorSelector)
-	if !ok {
-		vs = nil
-	}
+	vs, _ := depthFirstVectorSelector(location.Node)
 
 	item.Pos += offset
 
@@ -294,24 +292,67 @@ func (s *server) completeLabels(ctx context.Context, completions *[]protocol.Com
 
 	if isValue && lastLabel != "" {
 		loc.Node = &item
-		return s.completeLabelValue(ctx, completions, &loc, lastLabel)
+		return s.completeLabelValue(ctx, completions, &loc, lastLabel, vs)
 	}
 
 	if item.Typ == promql.EQL || item.Typ == promql.NEQ {
 		loc.Node = &promql.Item{Pos: item.Pos + promql.Pos(len(item.Val))}
-		return s.completeLabelValue(ctx, completions, &loc, lastLabel)
+		return s.completeLabelValue(ctx, completions, &loc, lastLabel, vs)
 	}
 
 	return nil
 }
 
-func (s *server) completeLabel(ctx context.Context, completions *[]protocol.CompletionItem, location *cache.Location, vs *promql.VectorSelector) error {
-	metricName := ""
-
-	if vs != nil {
-		metricName = vs.Name
+func depthFirstVectorSelector(node promql.Node) (*promql.VectorSelector, bool) {
+	if vs, ok := node.(*promql.VectorSelector); ok {
+		return vs, true
 	}
-	allNames, err := s.metadataService.LabelNames(ctx, metricName)
+
+	for _, child := range promql.Children(node) {
+		if vs, ok := depthFirstVectorSelector(child); ok {
+			return vs, true
+		}
+	}
+
+	return nil, false
+}
+
+func matchersFromVectorSelector(vs *promql.VectorSelector) ([]*labels.Matcher, error) {
+	if vs == nil {
+		return nil, nil
+	}
+	var matchers []*labels.Matcher
+	if vs.Name != "" {
+		m, err := labels.NewMatcher(labels.MatchEqual, model.MetricNameLabel, vs.Name)
+		if err != nil {
+			return nil, err
+		}
+		matchers = append(matchers, m)
+	}
+	for _, m := range vs.LabelMatchers {
+		if m == nil {
+			// Sometimes the label matcher is nil.
+			continue
+		}
+		if m.Name == model.MetricNameLabel {
+			// Only add the metric name label once, sometimes this is set
+			// just as name, sometimes as both name and as a matcher.
+			continue
+		}
+		matchers = append(matchers, m)
+	}
+	return matchers, nil
+}
+
+func (s *server) completeLabel(ctx context.Context, completions *[]protocol.CompletionItem, location *cache.Location, vs *promql.VectorSelector) error {
+	labelName := location.Node.(*promql.Item).Val
+
+	matchers, err := matchersFromVectorSelector(vs)
+	if err != nil {
+		return err
+	}
+
+	allNames, err := s.metadataService.LabelNames(ctx, matchers)
 	if err != nil {
 		// nolint: errcheck
 		s.client.LogMessage(s.lifetime, &protocol.LogMessageParams{
@@ -326,7 +367,6 @@ func (s *server) completeLabel(ctx context.Context, completions *[]protocol.Comp
 		return err
 	}
 
-	labelName := location.Node.(*promql.Item).Val
 OUTER:
 	for _, match := range getMatches(labelName, allNames) {
 		// Skip labels that already have matchers
@@ -353,8 +393,33 @@ OUTER:
 }
 
 // nolint: funlen
-func (s *server) completeLabelValue(ctx context.Context, completions *[]protocol.CompletionItem, location *cache.Location, labelName string) error {
-	labelValues, err := s.metadataService.LabelValues(ctx, labelName)
+func (s *server) completeLabelValue(
+	ctx context.Context,
+	completions *[]protocol.CompletionItem,
+	location *cache.Location,
+	labelName string,
+	vs *promql.VectorSelector,
+) error {
+	// Current selection from selector if not nil.
+	matchers, err := matchersFromVectorSelector(vs)
+	if err != nil {
+		return err
+	}
+
+	// Delete the current label from matchers if present, it is incomplete and
+	// we are trying to complete values for it.
+	if len(matchers) != 0 {
+		filtering := matchers[:]
+		matchers = matchers[:0]
+		for _, m := range filtering {
+			if m.Name == labelName {
+				continue // Filter out.
+			}
+			matchers = append(matchers, m)
+		}
+	}
+
+	labelValues, err := s.metadataService.LabelValues(ctx, labelName, matchers)
 	if err != nil {
 		// nolint: errcheck
 		s.client.LogMessage(s.lifetime, &protocol.LogMessageParams{

@@ -15,10 +15,12 @@ package prometheus
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/pkg/labels"
 )
 
 // notCompatibleHTTPClient must be used to contact a distant prometheus with a version < v2.15.
@@ -55,32 +57,56 @@ func (c *notCompatibleHTTPClient) AllMetricMetadata(ctx context.Context) (map[st
 	return allMetadata, nil
 }
 
-func (c *notCompatibleHTTPClient) LabelNames(ctx context.Context, name string) ([]string, error) {
-	if len(name) == 0 {
+func (c *notCompatibleHTTPClient) LabelNames(
+	ctx context.Context,
+	currMatchers []*labels.Matcher,
+) ([]string, error) {
+	if len(currMatchers) == 0 {
 		names, _, err := c.prometheusClient.LabelNames(ctx, time.Now().Add(-1*c.lookbackInterval), time.Now())
 		return names, err
 	}
-	labelNames, _, err := c.prometheusClient.Series(ctx, []string{name}, time.Now().Add(-1*c.lookbackInterval), time.Now())
+
+	labelNameAndValues, err := uniqueLabelNameAndValues(ctx, c.prometheusClient,
+		time.Now().Add(-1*c.lookbackInterval), time.Now(), currMatchers)
 	if err != nil {
 		return nil, err
 	}
-	// subResult is used as a set of label. Like that we are sure we don't have any duplication
-	subResult := make(map[string]bool)
-	for _, ln := range labelNames {
-		for l := range ln {
-			subResult[string(l)] = true
-		}
-	}
-	result := make([]string, 0, len(subResult))
-	for l := range subResult {
+
+	result := make([]string, 0, len(labelNameAndValues))
+	for l := range labelNameAndValues {
 		result = append(result, l)
 	}
+
 	return result, nil
 }
 
-func (c *notCompatibleHTTPClient) LabelValues(ctx context.Context, label string) ([]model.LabelValue, error) {
-	values, _, err := c.prometheusClient.LabelValues(ctx, label, time.Now().Add(-1*c.lookbackInterval), time.Now())
-	return values, err
+func (c *notCompatibleHTTPClient) LabelValues(
+	ctx context.Context,
+	label string,
+	currMatchers []*labels.Matcher,
+) ([]model.LabelValue, error) {
+	if len(currMatchers) == 0 {
+		values, _, err := c.prometheusClient.LabelValues(ctx, label, time.Now().Add(-1*c.lookbackInterval), time.Now())
+		return values, err
+	}
+
+	labelNameAndValues, err := uniqueLabelNameAndValues(ctx, c.prometheusClient,
+		time.Now().Add(-1*c.lookbackInterval), time.Now(), currMatchers)
+	if err != nil {
+		return nil, err
+	}
+
+	labelValues, ok := labelNameAndValues[label]
+	if !ok {
+		return nil, nil
+	}
+
+	result := make([]model.LabelValue, 0, len(labelValues))
+	for l := range labelValues {
+		result = append(result, model.LabelValue(l))
+	}
+
+	return result, nil
 }
 
 func (c *notCompatibleHTTPClient) ChangeDataSource(_ string) error {
@@ -93,4 +119,72 @@ func (c *notCompatibleHTTPClient) SetLookbackInterval(interval time.Duration) {
 
 func (c *notCompatibleHTTPClient) GetURL() string {
 	return ""
+}
+
+func uniqueLabelNameAndValues(
+	ctx context.Context,
+	prometheusClient v1.API,
+	start, end time.Time,
+	currMatchers []*labels.Matcher,
+) (map[string]map[string]struct{}, error) {
+	var (
+		metricName   string
+		metricLabels []*labels.Matcher
+	)
+	for _, matcher := range currMatchers {
+		if matcher.Name == model.MetricNameLabel {
+			metricName = string(matcher.Value)
+		} else {
+			metricLabels = append(metricLabels, matcher)
+		}
+	}
+
+	var match strings.Builder
+	if _, err := match.WriteString(metricName); err != nil {
+		return nil, err
+	}
+	if len(metricLabels) > 0 {
+		if _, err := match.WriteString("{"); err != nil {
+			return nil, err
+		}
+		for i, matcher := range metricLabels {
+			if i != 0 {
+				if _, err := match.WriteString(","); err != nil {
+					return nil, err
+				}
+			}
+			if _, err := match.WriteString(matcher.String()); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := match.WriteString("}"); err != nil {
+			return nil, err
+		}
+	}
+
+	results, _, err := prometheusClient.Series(ctx, []string{match.String()},
+		start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	// deduplicated is a de-duplicated result set.
+	deduplicated := make(map[string]map[string]struct{})
+	for _, labelSet := range results {
+		for name, value := range labelSet {
+			setKey := string(name)
+			curr, ok := deduplicated[setKey]
+			if !ok {
+				curr = map[string]struct{}{}
+				deduplicated[setKey] = curr
+			}
+			setValue := string(value)
+			if _, exists := curr[setValue]; exists {
+				continue
+			}
+			curr[setValue] = struct{}{}
+		}
+	}
+
+	return deduplicated, nil
 }

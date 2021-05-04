@@ -27,12 +27,13 @@ import (
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/pkg/labels"
 )
 
 var (
-	// defining this global variable will avoid to initialized it each time
+	// RequiredVersion is a global variable will avoid to initialized it each time
 	// and it will crash immediately the server during the initialization in case the version is not well defined
-	requiredVersion = semver.MustParse("2.15.0") // nolint: gochecknoglobals
+	RequiredVersion = semver.MustParse("2.15.0") // nolint: gochecknoglobals
 )
 
 func buildGenericRoundTripper(connectionTimeout time.Duration) *http.Transport {
@@ -66,16 +67,17 @@ func buildStatusRequest(prometheusURL string) (*http.Request, error) {
 	return httpRequest, nil
 }
 
-type buildInfoResponse struct {
+// BuildInfoResponse is the build info response from /api/v1/status/buildinfo.
+type BuildInfoResponse struct {
 	Status    string        `json:"status"`
-	Data      buildInfoData `json:"data,omitempty"`
+	Data      BuildInfoData `json:"data,omitempty"`
 	ErrorType string        `json:"errorType,omitempty"`
 	Error     string        `json:"error,omitempty"`
 	Warnings  []string      `json:"warnings,omitempty"`
 }
 
-// buildInfoData contains build information about Prometheus.
-type buildInfoData struct {
+// BuildInfoData contains build information about Prometheus.
+type BuildInfoData struct {
 	Version   string `json:"version"`
 	Revision  string `json:"revision"`
 	Branch    string `json:"branch"`
@@ -91,10 +93,13 @@ type MetadataService interface {
 	// AllMetricMetadata returns metadata about metrics currently scraped for all existing metrics.
 	AllMetricMetadata(ctx context.Context) (map[string][]v1.Metadata, error)
 	// LabelNames returns all the unique label names present in the block in sorted order.
-	// If a metric is provided, then it will return all unique label names linked to the metric during a predefined period of time
-	LabelNames(ctx context.Context, metricName string) ([]string, error)
+	// If currMatchers is not nil, then it will return all unique label
+	// names that are relevant to the currently specified labels for a query.
+	LabelNames(ctx context.Context, currMatchers []*labels.Matcher) ([]string, error)
 	// LabelValues performs a query for the values of the given label.
-	LabelValues(ctx context.Context, label string) ([]model.LabelValue, error)
+	// If currMatchers is not nil, then it will return all unique label
+	// values that are relevant to the currently specified labels for a query.
+	LabelValues(ctx context.Context, label string, currMatchers []*labels.Matcher) ([]model.LabelValue, error)
 	// ChangeDataSource is used if the prometheusURL is changing.
 	// The client should re init its own parameter accordingly if necessary
 	ChangeDataSource(prometheusURL string) error
@@ -140,16 +145,16 @@ func (c *httpClient) AllMetricMetadata(ctx context.Context) (map[string][]v1.Met
 	return c.subClient.AllMetricMetadata(ctx)
 }
 
-func (c *httpClient) LabelNames(ctx context.Context, name string) ([]string, error) {
+func (c *httpClient) LabelNames(ctx context.Context, currMatchers []*labels.Matcher) ([]string, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	return c.subClient.LabelNames(ctx, name)
+	return c.subClient.LabelNames(ctx, currMatchers)
 }
 
-func (c *httpClient) LabelValues(ctx context.Context, label string) ([]model.LabelValue, error) {
+func (c *httpClient) LabelValues(ctx context.Context, label string, currMatchers []*labels.Matcher) ([]model.LabelValue, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	return c.subClient.LabelValues(ctx, label)
+	return c.subClient.LabelValues(ctx, label, currMatchers)
 }
 
 func (c *httpClient) GetURL() string {
@@ -238,7 +243,7 @@ func (c *httpClient) isCompatible(prometheusURL string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		jsonResponse := buildInfoResponse{}
+		jsonResponse := BuildInfoResponse{}
 		err = json.Unmarshal(data, &jsonResponse)
 		if err != nil {
 			return false, err
@@ -247,7 +252,7 @@ func (c *httpClient) isCompatible(prometheusURL string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return currentVersion.GTE(requiredVersion), nil
+		return currentVersion.GTE(RequiredVersion), nil
 	}
 	return false, nil
 }
